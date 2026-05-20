@@ -1,77 +1,140 @@
-from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
+"""
+AI Agents Module
+Defines search agent, reader agent, writer chain, and critic chain
+using Groq Cloud LLM for fast inference.
+Simplified to work directly with tools without complex agent frameworks.
+"""
+
+from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from tools import web_search , scrape_url 
-from dotenv import load_dotenv
 
-load_dotenv()
+from config import GROQ_API_KEY, GROQ_MODEL, MODEL_TEMPERATURE
+from tools import web_search, scrape_url
+from utils import logger
 
-#model setup 
-llm = ChatOpenAI(model = "gpt-4o-mini",temperature=0)
+# Initialize Groq LLM
+try:
+    llm = ChatGroq(
+        model=GROQ_MODEL,
+        temperature=MODEL_TEMPERATURE,
+        api_key=GROQ_API_KEY
+    )
+    logger.info(f"Initialized Groq LLM with model: {GROQ_MODEL}")
+except Exception as e:
+    logger.error(f"Failed to initialize Groq LLM: {e}")
+    raise
 
 
-#1st agent 
+# ============================================
+# Agent 1: Search Agent (Simplified)
+# ============================================
 def build_search_agent():
-    return create_agent(
-        model = llm,
-        tools= [web_search]
-    )
+    """
+    Creates a simple search function that uses web_search tool.
+    Returns a callable that mimics agent behavior.
+    """
+    def search_executor(input_dict):
+        query = input_dict.get("input", "")
+        logger.info(f"Search agent executing query: {query}")
+        result = web_search.invoke(query)
+        return {"output": result}
+    
+    return type('SearchAgent', (), {'invoke': lambda self, x: search_executor(x)})()
 
-#2nd agent 
 
+# ============================================
+# Agent 2: Reader Agent (Simplified)
+# ============================================
 def build_reader_agent():
-    return create_agent(
-        model = llm,
-        tools = [scrape_url]
-    )
+    """
+    Creates a simple reader function that uses scrape_url tool.
+    Returns a callable that mimics agent behavior.
+    """
+    def reader_executor(input_dict):
+        text = input_dict.get("input", "")
+        logger.info(f"Reader agent processing: {text[:100]}...")
+        
+        # Extract URL from the input text
+        import re
+        urls = re.findall(r'https?://[^\s]+', text)
+        
+        if urls:
+            url = urls[0]  # Use first URL found
+            logger.info(f"Scraping URL: {url}")
+            result = scrape_url.invoke(url)
+        else:
+            result = "No URL found in the input to scrape."
+        
+        return {"output": result}
+    
+    return type('ReaderAgent', (), {'invoke': lambda self, x: reader_executor(x)})()
 
 
-#writer chain 
 
+# ============================================
+# Chain 1: Writer Chain
+# ============================================
 writer_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are an expert research writer. Write clear, structured and insightful reports."),
-    ("human", """Write a detailed research report on the topic below.
+    ("system", 
+     "You are an expert research writer with a PhD-level understanding of complex topics. "
+     "Write clear, well-structured, and insightful reports that are both comprehensive and accessible. "
+     "Use proper markdown formatting for better readability."),
+    ("human", 
+     """Write a detailed research report on the topic below.
 
-Topic: {topic}
+**Topic:** {topic}
 
-Research Gathered:
+**Research Gathered:**
 {research}
 
-Structure the report as:
-- Introduction
-- Key Findings (minimum 3 well-explained points)
-- Conclusion
-- Sources (list all URLs found in the research)
+**Required Structure:**
+1. **Introduction** - Provide context and overview
+2. **Key Findings** - Present at least 3-5 well-explained points with supporting evidence
+3. **Analysis** - Discuss implications and significance
+4. **Conclusion** - Summarize insights and future outlook
+5. **Sources** - List all URLs and references used
 
-Be detailed, factual and professional."""),
+**Guidelines:**
+- Be detailed, factual, and professional
+- Use markdown formatting (headers, lists, bold, italic)
+- Include specific data, statistics, or quotes when available
+- Maintain an objective, analytical tone
+- Aim for 800-1200 words"""),
 ])
 
 writer_chain = writer_prompt | llm | StrOutputParser()
 
-#critic_chain 
-
+# ============================================
+# Chain 2: Critic Chain
+# ============================================
 critic_prompt = ChatPromptTemplate.from_messages([
-     ("system", "You are a sharp and constructive research critic. Be honest and specific."),
-    ("human", """Review the research report below and evaluate it strictly.
+    ("system", 
+     "You are a sharp, constructive research critic with expertise in academic writing and journalism. "
+     "Evaluate reports based on accuracy, depth, clarity, structure, and evidence quality. "
+     "Be honest, specific, and actionable in your feedback."),
+    ("human", 
+     """Review the research report below and evaluate it comprehensively.
 
-Report:
+**Report:**
 {report}
 
-Respond in this exact format:
+**Respond in this exact format:**
 
-Score: X/10
+**Score:** X/10
 
-Strengths:
-- ...
-- ...
+**Strengths:**
+- [List 2-3 specific strengths]
 
-Areas to Improve:
-- ...
-- ...
+**Areas to Improve:**
+- [List 2-3 specific areas needing improvement]
 
-One line verdict:
-..."""),
+**Evidence Quality:** [Rate the use of sources and data]
+
+**Clarity & Structure:** [Assess readability and organization]
+
+**One-Line Verdict:**
+[Provide a concise overall assessment]"""),
 ])
 
 critic_chain = critic_prompt | llm | StrOutputParser()
